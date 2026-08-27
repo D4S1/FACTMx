@@ -115,6 +115,20 @@ class FACTMx_model(tf.Module):
     
     all_losses = tf.stack([kl_loss*self.beta, *decoding_losses])
     return -tf.reduce_mean(self.loss_scales * all_losses)
+  
+  def elbo_components(self, data):
+    """Does the same as elbo() but returns the individual loss components and total."""
+    head_kwargs = [head.encode(data[i]) for i, head in enumerate(self.heads)]
+    head_encoded = [head_pass.pop('encoder_input') for head_pass in head_kwargs]
+
+    latent, kl_loss = self.encoder.encode_with_loss(tf.concat(head_encoded, axis=-1))
+
+    decoding_losses = [head.loss(data[i], latent, beta=self.beta, **head_kwargs[i])
+                       for i, head in enumerate(self.heads)]
+
+    all_losses = tf.stack([kl_loss*self.beta, *decoding_losses])
+    total = -tf.reduce_mean(self.loss_scales * all_losses)
+    return all_losses, total
 
   def update_heads_temperature(self, temperature_update_scale):
     """Scale temperature attributes on heads that use relaxed categorical samples."""
