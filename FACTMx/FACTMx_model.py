@@ -154,6 +154,7 @@ class FACTMx_model(tf.Module):
     """Run the custom training loop over a TensorFlow dataset."""
     losses = []
     validation_losses = []
+    epoch_components = []
 
     temperature_update_scale = kwargs.pop('temperature_update', None)
     eps_update_scale = kwargs.pop('eps_update', None)
@@ -162,24 +163,33 @@ class FACTMx_model(tf.Module):
       if shuffle:
         dataset = dataset.shuffle(buffer_size=dataset.cardinality())
 
-      batched_dataset = dataset.batch(batch_size)
+        batched_dataset = dataset.batch(batch_size)
 
-      for batch in batched_dataset:
-        with tf.GradientTape() as tape:
-          loss = -self.elbo(batch)
-        gradients = tape.gradient(loss, self.t_vars)
-        self.optimizer.apply_gradients(zip(gradients, self.t_vars))
-        losses.append(loss)
+        comp_sum = 0.0
+        n_batches = 0
 
-      if temperature_update_scale is not None:
-        self.update_heads_temperature(temperature_update_scale)
-      if eps_update_scale is not None:
-        self.update_heads_eps(eps_update_scale)
+        for batch in batched_dataset:
+            with tf.GradientTape() as tape:
+                components, total = self.elbo_components(batch)
+                loss = -total
+            gradients = tape.gradient(loss, self.t_vars)
+            self.optimizer.apply_gradients(zip(gradients, self.t_vars))
+            losses.append(loss)
 
-      if validation_dataset is not None:
-        validation_losses.append(-self.elbo(validation_dataset))
+            comp_sum += components
+            n_batches += 1
 
-    return losses, validation_losses
+        epoch_components.append(comp_sum / n_batches)
+
+        if temperature_update_scale is not None:
+            self.update_heads_temperature(temperature_update_scale)
+        if eps_update_scale is not None:
+            self.update_heads_eps(eps_update_scale)
+
+        if validation_dataset is not None:
+            validation_losses.append(-self.elbo(validation_dataset))
+
+    return losses, validation_losses, epoch_components
 
   def get_config(self):
     """Serialize model, heads, encoder, loss scaling, and optional optimizer config."""
