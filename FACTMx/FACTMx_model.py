@@ -159,6 +159,7 @@ class FACTMx_model(tf.Module):
     temperature_update_scale = kwargs.pop('temperature_update', None)
     eps_update_scale = kwargs.pop('eps_update', None)
 
+    epoch_losses = []
     for epoch in range(epochs):
       if shuffle:
         dataset = dataset.shuffle(buffer_size=dataset.cardinality())
@@ -174,12 +175,13 @@ class FACTMx_model(tf.Module):
                 loss = -total
             gradients = tape.gradient(loss, self.t_vars)
             self.optimizer.apply_gradients(zip(gradients, self.t_vars))
-            losses.append(loss)
+            epoch_losses.append(loss)
 
             comp_sum += components
             n_batches += 1
 
         epoch_components.append(comp_sum / n_batches)
+        losses.append(tf.reduce_mean(tf.stack(epoch_losses)))
 
         if temperature_update_scale is not None:
             self.update_heads_temperature(temperature_update_scale)
