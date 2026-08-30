@@ -149,49 +149,82 @@ class FACTMx_model(tf.Module):
             validation_dataset=None,
             epochs=1,
             batch_size=200,
-            shuffle=True,
+            early_stopping=False,
+            es_params:dict={'patience': 10, 'rel_delta': 0.002, 'min_delta': None},
             **kwargs):
     """Run the custom training loop over a TensorFlow dataset."""
-    losses = []
+
+    # Initialize tracking variables
+    training_losses = []
     validation_losses = []
     epoch_components = []
+
+    # Early stopping helper variables
+    best_loss = float('inf')
+    best_weights = None
+    wait_counter = 0
 
     temperature_update_scale = kwargs.pop('temperature_update', None)
     eps_update_scale = kwargs.pop('eps_update', None)
 
-    epoch_losses = []
     for epoch in range(epochs):
-      if shuffle:
-        dataset = dataset.shuffle(buffer_size=dataset.cardinality())
 
-        batched_dataset = dataset.batch(batch_size)
+      # epoch helper variables
+      epoch_losses = 0.0
+      comp_sum = 0.0
+      n_batches = 0
 
-        comp_sum = 0.0
-        n_batches = 0
+      dataset = dataset.shuffle(buffer_size=dataset.cardinality())
+      batched_dataset = dataset.batch(batch_size)
 
-        for batch in batched_dataset:
-            with tf.GradientTape() as tape:
-                components, total = self.elbo_components(batch)
-                loss = -total
-            gradients = tape.gradient(loss, self.t_vars)
-            self.optimizer.apply_gradients(zip(gradients, self.t_vars))
-            epoch_losses.append(loss)
+      for batch in batched_dataset:
+          
+          with tf.GradientTape() as tape:
+              components, total = self.elbo_components(batch)
+              loss = -total
 
-            comp_sum += components
-            n_batches += 1
+          gradients = tape.gradient(loss, self.t_vars)
+          self.optimizer.apply_gradients(zip(gradients, self.t_vars))
 
-        epoch_components.append(comp_sum / n_batches)
-        losses.append(tf.reduce_mean(tf.stack(epoch_losses)))
+          # Track epoch losses and components
+          epoch_losses += loss
+          comp_sum += components
+          n_batches += 1
 
-        if temperature_update_scale is not None:
-            self.update_heads_temperature(temperature_update_scale)
-        if eps_update_scale is not None:
-            self.update_heads_eps(eps_update_scale)
+      epoch_components.append(comp_sum / n_batches)
+      training_losses.append(tf.reduce_mean(tf.stack(epoch_losses / n_batches)))
 
-        if validation_dataset is not None:
-            validation_losses.append(-self.elbo(validation_dataset))
+      if temperature_update_scale is not None:
+          self.update_heads_temperature(temperature_update_scale)
+      if eps_update_scale is not None:
+          self.update_heads_eps(eps_update_scale)
 
-    return losses, validation_losses, epoch_components
+      if validation_dataset is not None:
+          validation_losses.append(-self.elbo(validation_dataset))
+
+      if early_stopping and epoch > 0:
+        current_loss = validation_losses[-1] if validation_losses else training_losses[-1]
+
+        if es_params.get('min_delta') is not None:
+          improved = current_loss < best_loss - es_params['min_delta']
+        else:
+          improved = current_loss < best_loss * (1 - es_params['rel_delta'])
+
+        if improved:
+          best_loss = current_loss
+          best_weights = [tf.identity(v) for v in self.t_vars]
+          wait_counter = 0
+        else:
+          wait_counter += 1
+          if wait_counter >= es_params['patience']:
+            warning(f'Early stopping triggered after {epoch} epochs.')
+            break
+
+    if early_stopping and best_weights is not None:
+      for var, best_var in zip(self.t_vars, best_weights):
+        var.assign(best_var)
+
+    return training_losses, validation_losses, epoch_components
 
   def get_config(self):
     """Serialize model, heads, encoder, loss scaling, and optional optimizer config."""
