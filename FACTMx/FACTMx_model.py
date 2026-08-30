@@ -126,8 +126,8 @@ class FACTMx_model(tf.Module):
     decoding_losses = [head.loss(data[i], latent, beta=self.beta, **head_kwargs[i])
                        for i, head in enumerate(self.heads)]
 
-    all_losses = tf.stack([kl_loss*self.beta, *decoding_losses])
-    total = -tf.reduce_mean(self.loss_scales * all_losses)
+    all_losses = self.loss_scales * tf.stack([kl_loss*self.beta, *decoding_losses])
+    total = -tf.reduce_mean(all_losses)
     return all_losses, total
 
   def update_heads_temperature(self, temperature_update_scale):
