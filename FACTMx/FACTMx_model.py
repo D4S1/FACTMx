@@ -212,7 +212,7 @@ class FACTMx_model(tf.Module):
 
         if improved:
           best_loss = current_loss
-          # best_weights = [tf.identity(v) for v in self.t_vars]
+          best_weights = [tf.identity(v) for v in self.t_vars]
           wait_counter = 0
         else:
           wait_counter += 1
